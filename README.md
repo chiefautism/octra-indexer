@@ -188,4 +188,14 @@ bun run cli -- locks --data-dir="/path/to/octra-data"
 bun run cli -- locks clean --data-dir="/path/to/octra-data" --done
 ```
 
+## Tests
+
+The test suite is intentionally real integration coverage. It talks to the live Octra RPC, runs the CLI against temporary data directories, writes JSONL files, checks cursor state, and verifies background logs/progress.
+
+```bash
+bun run test
+```
+
+Because these tests hit public RPC, keep them low-rate and do not run them in a tight loop.
+
 This repository intentionally does not include generated docs, local proxy files, runtime logs, or indexed chain data.

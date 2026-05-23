@@ -10,7 +10,8 @@
     "start": "bun run src/index.ts",
     "once": "bun run src/index.ts --once",
     "cli": "bun run src/cli.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest"
