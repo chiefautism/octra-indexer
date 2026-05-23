@@ -228,6 +228,14 @@ Tables:
 
 `transactions.raw_json`, `epochs.raw_json`, and `staging_snapshots.raw_json` keep the original raw payload so the normalized schema can evolve without losing data.
 
+SQLite is the only built-in materializer. Everything after that is intentionally left to downstream tools: API servers, dashboards, ClickHouse loaders, Postgres importers, S3 exports, or custom analytics jobs can read either the raw JSONL files or the SQLite database.
+
+The project boundary is:
+
+```text
+Octra RPC -> raw JSONL -> normalized SQLite -> your downstream system
+```
+
 ## Maintenance
 
 ```bash
