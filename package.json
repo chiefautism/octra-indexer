@@ -1,0 +1,21 @@
+{
+  "name": "octra-indexer",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "octra-indexer": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "once": "bun run src/index.ts --once",
+    "cli": "bun run src/cli.ts",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
