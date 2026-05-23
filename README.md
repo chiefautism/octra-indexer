@@ -27,6 +27,17 @@ Once that raw data is local, you can build:
 
 The current goal is raw collection, not a finished database/query engine.
 
+## Architecture
+
+The indexer has two separate layers:
+
+1. **Raw collector**
+   Downloads RPC responses and stores append-only JSONL shards. This is the source of truth.
+2. **Materializer**
+   Reads raw JSONL and builds normalized SQLite tables for queries and downstream tools.
+
+The collector and materializer keep separate progress state. Collector state lives in `state/cursor.json` and epoch `.done` markers. Materializer state lives in SQLite `materializer_checkpoints` and `state/materializer.cursor.json`.
+
 ## Design
 
 1. **Resume first**: completed epochs get `.done` markers, active epochs use lock directories, and stale locks can be cleaned.
@@ -170,15 +181,52 @@ socks5://user:pass@host:port[https://provider.example/refresh-ip]
     staging/
   state/
     cursor.json
+    materializer.cursor.json
     epochs/*.done
     locks/*.lock/
     indexer.pid.json
   logs/
     indexer.log
     indexer.err.log
+  materialized/
+    octra.sqlite
 ```
 
 Raw files are sharded by epoch range and written as JSONL. This makes the collector easy to stop, copy, replay, and process with separate tools.
+
+## Materialized Tables
+
+Build normalized SQLite tables from raw JSONL:
+
+```bash
+bun run cli -- materialize --data-dir="/path/to/octra-data"
+```
+
+Write the database somewhere else:
+
+```bash
+bun run cli -- materialize \
+  --data-dir="/path/to/octra-data" \
+  --db-path="/path/to/octra.sqlite"
+```
+
+Materialize a bounded epoch range:
+
+```bash
+bun run cli -- materialize --data-dir="/path/to/octra-data" --from=100000 --to=200000
+```
+
+Tables:
+
+- `epochs`
+- `transactions`
+- `addresses`
+- `address_transactions`
+- `staging_snapshots`
+- `materializer_checkpoints`
+- `materializer_state`
+
+`transactions.raw_json`, `epochs.raw_json`, and `staging_snapshots.raw_json` keep the original raw payload so the normalized schema can evolve without losing data.
 
 ## Maintenance
 

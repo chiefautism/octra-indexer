@@ -1,4 +1,5 @@
 import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,6 +64,32 @@ async function expectFile(path: string) {
   const fileStat = await stat(path);
   expect(fileStat.isFile()).toBe(true);
   expect(fileStat.size).toBeGreaterThan(0);
+}
+
+async function indexEpoch(dataDir: string, epoch: number) {
+  let lastResult: CommandResult | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await runCli(
+      [
+        "run",
+        `--data-dir=${dataDir}`,
+        `--from=${epoch}`,
+        `--to=${epoch}`,
+        "--workers=1",
+        "--rps=1",
+        "--timeout-ms=30000",
+        "--retries=4",
+      ],
+      90_000,
+    );
+    lastResult = result;
+    if (result.exitCode === 0) return result;
+    await Bun.sleep(2_000 * (attempt + 1));
+  }
+
+  throw new Error(
+    `index epoch ${epoch} failed\nstdout:\n${lastResult?.stdout ?? ""}\nstderr:\n${lastResult?.stderr ?? ""}`,
+  );
 }
 
 async function currentEpoch() {
@@ -131,6 +158,50 @@ test("real foreground index run writes epoch data and cursor", async () => {
   expect(txRows.some((row) => row.type === "octra_transactionsByEpoch" && row.epoch === 1)).toBe(true);
 });
 
+test("real materializer builds normalized SQLite tables from raw JSONL", async () => {
+  const dataDir = await tempDataDir();
+  const collect = await runCli([
+    "run",
+    `--data-dir=${dataDir}`,
+    "--from=100000",
+    "--to=100000",
+    "--workers=1",
+    "--rps=1",
+    "--timeout-ms=15000",
+    "--retries=2",
+  ]);
+
+  expect(collect.exitCode).toBe(0);
+  expect(collect.stdout).toContain("dumped epoch=100000");
+
+  const materialize = await runCli(["materialize", `--data-dir=${dataDir}`, "--from=100000", "--to=100000"]);
+  expect(materialize.exitCode).toBe(0);
+  expect(materialize.stdout).toContain("processed_files=");
+  expect(materialize.stdout).toContain("transactions=");
+
+  const dbPath = join(dataDir, "materialized", "octra.sqlite");
+  await expectFile(dbPath);
+
+  const db = new Database(dbPath, { readonly: true });
+  const epoch = db.query("SELECT epoch_id FROM epochs WHERE epoch_id = 100000").get() as { epoch_id: number } | undefined;
+  expect(epoch?.epoch_id).toBe(100000);
+
+  const txCount = db.query("SELECT COUNT(*) AS count FROM transactions WHERE epoch_id = 100000").get() as { count: number };
+  expect(txCount.count).toBeGreaterThan(0);
+
+  const addressCount = db.query("SELECT COUNT(*) AS count FROM addresses").get() as { count: number };
+  expect(addressCount.count).toBeGreaterThan(0);
+
+  const addressTxCount = db.query("SELECT COUNT(*) AS count FROM address_transactions").get() as { count: number };
+  expect(addressTxCount.count).toBeGreaterThan(0);
+
+  const checkpointCount = db.query("SELECT COUNT(*) AS count FROM materializer_checkpoints").get() as { count: number };
+  expect(checkpointCount.count).toBeGreaterThan(0);
+  db.close();
+
+  await expectFile(join(dataDir, "state", "materializer.cursor.json"));
+}, { timeout: 60_000 });
+
 test("real background run writes logs and progress", async () => {
   const dataDir = await tempDataDir();
   const start = await runCli([
@@ -178,19 +249,7 @@ test("real index run handles 10 random historical epochs", async () => {
   const epochs = randomEpochs(10, await currentEpoch());
 
   for (const epoch of epochs) {
-    const result = await runCli(
-      [
-        "run",
-        `--data-dir=${dataDir}`,
-        `--from=${epoch}`,
-        `--to=${epoch}`,
-        "--workers=1",
-        "--rps=1",
-        "--timeout-ms=15000",
-        "--retries=2",
-      ],
-      45_000,
-    );
+    const result = await indexEpoch(dataDir, epoch);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(`dumped epoch=${epoch}`);
@@ -207,4 +266,4 @@ test("real index run handles 10 random historical epochs", async () => {
     const txRows = await readJsonl(join(dataDir, "raw", "tx_by_epoch", epochShard("tx_by_epoch", epoch)));
     expect(txRows.some((row) => row.type === "octra_transactionsByEpoch" && row.epoch === epoch)).toBe(true);
   }
-}, { timeout: 120_000 });
+}, { timeout: 240_000 });

@@ -30,6 +30,7 @@ Usage:
   bun run cli -- restart [--data-dir=/path/data]
   bun run cli -- status [--data-dir=/path/data]
   bun run cli -- progress [--data-dir=/path/data]
+  bun run cli -- materialize [--data-dir=/path/data] [--db-path=/path/octra.sqlite] [--from=0] [--to=1000] [--force]
   bun run cli -- logs [--data-dir=/path/data] [--follow]
   bun run cli -- doctor [--data-dir=/path/data]
   bun run cli -- locks [--data-dir=/path/data]
@@ -70,10 +71,11 @@ function defaultProxyFileFor(dataDir: string) {
   return join(dataDir, "config", "proxies.txt");
 }
 
-async function runCommand(cmd: string[], options: { inherit?: boolean } = {}): Promise<CommandResult> {
+async function runCommand(cmd: string[], options: { inherit?: boolean; env?: Record<string, string | undefined> } = {}): Promise<CommandResult> {
   const proc = Bun.spawn(cmd, {
     stdout: options.inherit ? "inherit" : "pipe",
     stderr: options.inherit ? "inherit" : "pipe",
+    env: options.env,
   });
 
   if (options.inherit) {
@@ -192,7 +194,19 @@ async function runForeground() {
   await ensureDataDirs(dataDir);
   const env = await envForIndexer(dataDir);
   const args = indexerArgs("run");
-  const result = await runCommand([bunPath, "src/index.ts", ...args], { inherit: true });
+  const result = await runCommand([bunPath, "src/index.ts", ...args], { inherit: true, env });
+  process.exit(result.exitCode);
+}
+
+async function materialize() {
+  const passThrough = ["data-dir", "db-path", "from", "to"];
+  const args = passThrough.flatMap((name) => {
+    const value = getOpt(name);
+    return value === undefined ? [] : [`--${name}=${value}`];
+  });
+  if (hasFlag("force")) args.push("--force");
+
+  const result = await runCommand([bunPath, "src/materialize.ts", ...args], { inherit: true });
   process.exit(result.exitCode);
 }
 
@@ -442,6 +456,7 @@ async function main() {
   }
   if (command === "status") return status();
   if (command === "progress") return progress();
+  if (command === "materialize") return materialize();
   if (command === "logs") return printLogs();
   if (command === "doctor") return doctor();
   if (command === "locks") return locks();
