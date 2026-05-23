@@ -109,6 +109,18 @@ The background runner writes:
 
 ## Proxies
 
+The public RPC is rate limited. In practice, expect about **3-4 requests per second** from one endpoint/IP before `429 Too Many Requests` starts showing up.
+
+If you keep pushing above that limit, the RPC anti-DDoS layer can ban the client temporarily. For faster backfills, use a proxy pool and keep per-proxy RPS conservative.
+
+Recommended approach:
+
+- keep direct RPC around `--rps=3.5`
+- rotate proxies for higher aggregate throughput
+- cool down failing proxies
+- use provider refresh URLs when available
+- keep retries/backoff enabled for `429` and network errors
+
 Use one proxy:
 
 ```bash
