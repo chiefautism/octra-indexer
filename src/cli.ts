@@ -141,9 +141,38 @@ function indexerArgs(mode: "run" | "start") {
   return args;
 }
 
-function isProcessRunning(pid: number) {
+function processState(pid: number) {
   try {
     process.kill(pid, 0);
+    return "running";
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code === "EPERM") return "unknown";
+    return "stopped";
+  }
+}
+
+function isProcessRunning(pid: number) {
+  return processState(pid) === "running";
+}
+
+async function waitForStop(pid: number) {
+  for (let i = 0; i < 50; i += 1) {
+    await Bun.sleep(200);
+    const state = processState(pid);
+    if (state === "stopped") {
+      return true;
+    }
+    if (state === "unknown") {
+      return false;
+    }
+  }
+  return false;
+}
+
+function killProcess(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal);
     return true;
   } catch {
     return false;
@@ -172,7 +201,8 @@ async function start() {
   await ensureDataDirs(dataDir);
 
   const existing = await readPidState(dataDir);
-  if (existing && isProcessRunning(existing.pid)) {
+  const existingState = existing ? processState(existing.pid) : "stopped";
+  if (existing && existingState !== "stopped") {
     console.log(`status: running`);
     console.log(`pid: ${existing.pid}`);
     return;
@@ -214,23 +244,27 @@ async function stop() {
     return;
   }
 
-  if (!isProcessRunning(state.pid)) {
+  const currentState = processState(state.pid);
+  if (currentState === "stopped") {
     await rm(pidPath(dataDir), { force: true });
     console.log("status: stopped");
     return;
   }
 
-  process.kill(state.pid, "SIGTERM");
-  for (let i = 0; i < 50; i += 1) {
-    await Bun.sleep(200);
-    if (!isProcessRunning(state.pid)) {
-      await rm(pidPath(dataDir), { force: true });
-      console.log("stopped");
-      return;
-    }
+  if (!killProcess(state.pid, "SIGTERM")) {
+    console.log("status: unknown");
+    console.log(`pid: ${state.pid}`);
+    console.log("could_not_signal_process");
+    return;
   }
 
-  process.kill(state.pid, "SIGKILL");
+  if (await waitForStop(state.pid)) {
+    await rm(pidPath(dataDir), { force: true });
+    console.log("stopped");
+    return;
+  }
+
+  killProcess(state.pid, "SIGKILL");
   await rm(pidPath(dataDir), { force: true });
   console.log("stopped");
 }
@@ -238,14 +272,15 @@ async function stop() {
 async function status() {
   const dataDir = resolveDataDir();
   const state = await readPidState(dataDir);
-  if (!state || !isProcessRunning(state.pid)) {
+  const currentState = state ? processState(state.pid) : "stopped";
+  if (!state || currentState === "stopped") {
     if (state) await rm(pidPath(dataDir), { force: true });
     console.log("status: stopped");
     console.log(`data: ${dataDir}`);
     return;
   }
 
-  console.log("status: running");
+  console.log(`status: ${currentState}`);
   console.log(`pid: ${state.pid}`);
   console.log(`started_at: ${state.started_at}`);
   console.log(`data: ${state.data_dir}`);
